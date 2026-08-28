@@ -1,0 +1,15 @@
+Multi-Account Agentic Incident Response on AWS
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+This product includes software developed by Amazon.com, Inc. or its affiliates,
+licensed under the MIT No Attribution license (MIT-0). See LICENSE.
+
+This sample deploys, but does not redistribute or modify, the AWS One
+Observability Workshop PetAdoptions application from
+aws-samples/one-observability-demo. That repository is fetched at deploy time at
+a pinned git ref and remains under its own license. See THIRD_PARTY_LICENSES.md.
+
+Third-party dependencies are declared in this repository's package manifests and
+are resolved at build time. No third-party source code, model weights, or
+container images are bundled in or redistributed by this repository. Attribution
+for those dependencies is recorded in THIRD_PARTY_LICENSES.md.

@@ -1,0 +1,39 @@
+[project]
+name = "backend-diagnostics-mcp"
+version = "0.1.0"
+description = "Deterministic diagnostics MCP server for PetAdoptions backend"
+license = { text = "MIT-0" }
+requires-python = ">=3.11"
+# Exact pins, not open `>=` ranges. This is not cosmetic hardening: with the
+# previous `mcp[cli]>=1.9.0` an image built after mcp 2.0.0 shipped resolves
+# to 2.x, which removed `mcp.server.fastmcp` — the module src/server.py
+# imports — so `docker build` produced an image that failed at import time.
+# The versions below are the ones this package's test suite was verified
+# green against (65 passed, 2026-08-24).
+#
+# To refresh: resolve in a clean venv, run `pytest tests/`, and only then
+# update these pins to the freeze output.
+dependencies = [
+    "mcp[cli]==1.29.0",
+    "boto3==1.43.78",
+    "uvicorn==0.52.4",
+    "starlette==0.52.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.2",
+    "pytest-asyncio==0.26.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+# Pinned so a rebuild cannot pick up a hatchling major that changes wheel
+# layout. Verified with the test run referenced above.
+requires = ["hatchling==1.32.0"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

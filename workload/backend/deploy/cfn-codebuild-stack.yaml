@@ -1,0 +1,356 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AI-Ops PoC — CodeBuild project that deploys the upstream
+  aws-samples/one-observability-demo PetAdoptions backend.
+  This wraps the upstream deployment mechanism (CodeBuild + CDK) without
+  forking application source code.
+
+Parameters:
+  UpstreamRepoUrl:
+    Type: String
+    Description: HTTPS clone URL of the upstream repository
+    Default: "https://github.com/aws-samples/one-observability-demo.git"
+
+  UpstreamRef:
+    Type: String
+    Description: >
+      Git ref to pin the upstream source to: a branch, a tag, or a FULL
+      40-character commit SHA. An abbreviated SHA does not work — the buildspec
+      fetches this ref by name and git cannot fetch an abbreviated SHA.
+      deploy-upstream.sh always passes upstream.ref from config/accounts.json;
+      this default only applies when the template is deployed directly.
+    Default: "main"
+
+  UpstreamOrg:
+    Type: String
+    Description: GitHub org of the upstream repository
+    Default: "aws-samples"
+
+  UpstreamRepo:
+    Type: String
+    Description: Repository name (used for naming)
+    Default: "one-observability-demo"
+
+  BuildComputeType:
+    Type: String
+    Description: CodeBuild compute type
+    Default: BUILD_GENERAL1_MEDIUM
+    AllowedValues:
+      - BUILD_GENERAL1_SMALL
+      - BUILD_GENERAL1_MEDIUM
+      - BUILD_GENERAL1_LARGE
+
+  BuildTimeoutMinutes:
+    Type: Number
+    Description: >
+      Build timeout in minutes. The upstream CDK deploy takes OVER AN HOUR in
+      practice (45-90 min observed; a first deploy into a cold account is at the
+      slow end), so the 60-minute default this template used to ship timed out a
+      real deployment. CodeBuild bills only the build minutes actually consumed,
+      so a generous timeout costs nothing: it caps a hung build, it does not
+      reserve time. MaxValue is CodeBuild's own ceiling of 2160 (36 hours).
+    Default: 120
+    MinValue: 10
+    MaxValue: 2160
+
+Resources:
+  # ─── IAM Role for CodeBuild ────────────────────────────────────────────────
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aiops-poc-upstream-deploy-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # AdministratorAccess is required because the upstream CDK template
+        # creates IAM roles, VPCs, ECS clusters, RDS, DynamoDB, Lambda, etc.
+        # This mirrors the upstream workshop's own CodeBuild role requirements.
+        #
+        # ⚠ NOT FOR PRODUCTION. This grant is equivalent to Action '*' on
+        # Resource '*' — full administrative control of the account — and is
+        # intentional ONLY for this proof-of-concept, where the account is
+        # dedicated to the PoC and the role exists solely to run the upstream
+        # workshop's CDK deploy once. Before any production or shared-account
+        # use, replace it with a least-privilege policy scoped to the specific
+        # services, actions and resource ARNs the deployment actually creates
+        # (CloudFormation stacks, the aiops-poc-upstream-source-* bucket, the
+        # ECS cluster, the Aurora cluster, the DynamoDB tables and the Lambda
+        # functions named by the upstream template). Deploying this template
+        # as-is into an account holding other workloads gives this CodeBuild
+        # project the ability to read, modify or delete all of them.
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Policies:
+        - PolicyName: S3ConfigBucketAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:PutBucketVersioning
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:HeadBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::aiops-poc-upstream-source-${AWS::AccountId}"
+                  - !Sub "arn:aws:s3:::aiops-poc-upstream-source-${AWS::AccountId}/*"
+      Tags:
+        - Key: Project
+          Value: aiops-poc
+        - Key: Component
+          Value: upstream-backend-deploy
+
+  # ─── CodeBuild Logs ────────────────────────────────────────────────────────
+  CodeBuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/aiops-poc-upstream-backend"
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: aiops-poc
+
+  # ─── CodeBuild Project ─────────────────────────────────────────────────────
+  UpstreamDeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: aiops-poc-upstream-backend
+      Description: >
+        Deploys upstream one-observability-demo PetAdoptions backend
+        using CDK inside CodeBuild (mirrors upstream deployment mechanism).
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      TimeoutInMinutes: !Ref BuildTimeoutMinutes
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: !Sub |
+          version: 0.2
+          env:
+            variables:
+              UPSTREAM_REPO_URL: "${UpstreamRepoUrl}"
+              UPSTREAM_REF: "${UpstreamRef}"
+          phases:
+            install:
+              runtime-versions:
+                nodejs: "20"
+                python: "3.12"
+              commands:
+                - echo "=== Installing CDK CLI and dependencies ==="
+                - npm install -g aws-cdk typescript ts-node
+                - pip install git-remote-s3
+                - cdk --version
+            pre_build:
+              commands:
+                # Fetch by ref instead of `git clone --branch`: --branch only
+                # accepts a branch or tag name, so a commit SHA — the only value
+                # that actually pins anything — fails with "Remote branch <sha>
+                # not found in upstream origin". `git fetch <ref>` accepts a
+                # branch, a tag, or a FULL 40-character SHA. An abbreviated SHA
+                # is not fetchable and fails here with "couldn't find remote ref".
+                # One command per list item, so CodeBuild's own per-command error
+                # handling still fails the phase on the first failure.
+                - echo "=== Fetching upstream repo at $UPSTREAM_REF ==="
+                - git init --quiet /tmp/upstream
+                - cd /tmp/upstream && git remote add origin "$UPSTREAM_REPO_URL"
+                - cd /tmp/upstream && git fetch --depth 1 origin "$UPSTREAM_REF"
+                - cd /tmp/upstream && git checkout --quiet FETCH_HEAD
+                - cd /tmp/upstream && git log --oneline -1
+                - export CDK_DIR="/tmp/upstream/src/cdk"
+                - 'echo "CDK directory: $CDK_DIR"'
+                - echo "=== Setting up S3 config bucket ==="
+                - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text) && export CONFIG_BUCKET="aiops-poc-upstream-source-$ACCOUNT_ID" && echo "Config bucket $CONFIG_BUCKET"
+                - aws s3api head-bucket --bucket "$CONFIG_BUCKET" 2>/dev/null || aws s3 mb "s3://$CONFIG_BUCKET"
+                - aws s3api put-bucket-versioning --bucket "$CONFIG_BUCKET" --versioning-configuration Status=Enabled
+                # UPSTREAM_REF is only an opaque label in the S3 key below and in
+                # BRANCH_NAME further down — the upstream CDK reads the object at
+                # the key built from BRANCH_NAME, and both sides are built from the
+                # same string, so a commit SHA works here exactly like a branch name.
+                - echo "=== Uploading repo to S3 ==="
+                - cd /tmp/upstream && git archive --format=zip HEAD -o /tmp/repo.zip
+                - aws s3 cp /tmp/repo.zip "s3://$CONFIG_BUCKET/repo/refs/heads/$UPSTREAM_REF/repo.zip"
+            build:
+              commands:
+                - cd "$CDK_DIR"
+                - echo "=== Installing CDK dependencies ==="
+                - npm ci
+                - echo "=== Creating .env file ==="
+                - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                - printf "CONFIG_BUCKET=%s\nAWS_ACCOUNT_ID=%s\nAWS_REGION=%s\nBRANCH_NAME=%s\nSTACK_NAME=OneObservability\nORGANIZATION_NAME=aws-samples\nREPOSITORY_NAME=one-observability-demo\nWORKING_FOLDER=src/cdk\nCONCURRENT_USERS=5\n" "$CONFIG_BUCKET" "$ACCOUNT_ID" "$AWS_DEFAULT_REGION" "$UPSTREAM_REF" > .env
+                # Enable the PetFood AI agent (Bedrock AgentCore runtime). The upstream
+                # gates it behind ENABLE_PET_FOOD_AGENT; without it the runtime and the
+                # /petstore/petfoodagent-runtime-arn SSM parameter are never created and
+                # petsite's Waggle chat fails with ParameterNotFound.
+                #
+                # ENABLE_PET_FOOD_AGENT also switches the upstream VPC from
+                # `maxAzs: 2` to explicit `availabilityZones` (AgentCore VPC mode is
+                # only supported in specific AZs). To avoid restructuring an
+                # already-deployed VPC (subnet CIDR reshuffling = replacement of
+                # everything in it), reuse the AZs of the existing workshop VPC when
+                # present; otherwise fall back to the upstream's own region->zone-id
+                # mapping (scripts/validate-account.sh) resolved to zone names.
+                - echo "=== Enabling PetFood agent (Bedrock AgentCore) ==="
+                - echo "ENABLE_PET_FOOD_AGENT=true" >> .env
+                - |
+                  AZS=$(aws ec2 describe-subnets \
+                    --filters "Name=tag:Name,Values=DevCoreStack/vpc/VPC-Workshop/PrivateSubnet*" \
+                    --query 'Subnets[].AvailabilityZone' --output text | tr '\t' '\n' | sort -u | paste -sd, -)
+                  if [ -z "$AZS" ]; then
+                    case "$AWS_DEFAULT_REGION" in
+                      us-east-1)      ZONE_IDS="use1-az1,use1-az2,use1-az4" ;;
+                      us-east-2)      ZONE_IDS="use2-az1,use2-az2,use2-az3" ;;
+                      us-west-2)      ZONE_IDS="usw2-az1,usw2-az2,usw2-az3" ;;
+                      ap-southeast-2) ZONE_IDS="apse2-az1,apse2-az2,apse2-az3" ;;
+                      *)              ZONE_IDS="" ;;
+                    esac
+                    if [ -n "$ZONE_IDS" ]; then
+                      AZS=$(aws ec2 describe-availability-zones \
+                        --filters "Name=zone-id,Values=$ZONE_IDS" \
+                        --query 'AvailabilityZones[].ZoneName' --output text | tr '\t' '\n' | sort -u | paste -sd, -)
+                    fi
+                  fi
+                  if [ -n "$AZS" ]; then
+                    echo "AVAILABILITY_ZONES=$AZS" >> .env
+                    echo "Using availability zones: $AZS"
+                  else
+                    echo "WARNING: could not derive AVAILABILITY_ZONES; upstream CDK will use its defaults"
+                  fi
+                - cat .env
+                - echo "=== Disabling cdk-nag for PoC deployment ==="
+                - sed -i "/import.*AwsSolutionsChecks.*from 'cdk-nag'/d" bin/local.ts
+                - sed -i "/import.*NagSuppressions.*from 'cdk-nag'/d" bin/local.ts
+                - sed -i "s/, WorkshopNagPack//" bin/local.ts
+                - sed -i '/^\/\*\* Add CDK-nag/,$d' bin/local.ts
+                - sed -i '/SuppressLogRetentionNag\|SuppressKubectlProviderNag/d' bin/local.ts
+                # ─── CDK Bootstrap, into upstream's OWN toolkit stack ──────────
+                #
+                # Upstream's src/cdk/cdk.json sets
+                # "@aws-cdk/core:bootstrapQualifier" to a non-default value, and
+                # upstream's own src/cdk/scripts/bootstrap-account.sh bootstraps it
+                # with BOTH --qualifier and --toolkit-stack-name so it lands in a
+                # namespaced stack. A bare `cdk bootstrap` run from this directory
+                # inherits the qualifier from that cdk.json but writes to the DEFAULT
+                # stack name, CDKToolkit — hijacking the stack scripts/bootstrap.sh
+                # created for the default qualifier and replacing the cdk-hnb659fds-*
+                # staging roles with cdk-<qualifier>-* ones. Every other CDK app in
+                # this repo then fails to deploy. Two qualifiers have to coexist in
+                # the backend account permanently, and CDK supports that as one
+                # toolkit stack per qualifier, so give upstream its own.
+                #
+                # Read the qualifier out of upstream's cdk.json rather than
+                # hardcoding it: UpstreamRef is a parameter that defaults to "main",
+                # so upstream's value is not actually pinned in the general case, and
+                # reading it keeps the bootstrap and the deploy that follows in
+                # agreement without anyone remembering to update this file. The one
+                # way that reasoning can go wrong — the key being absent — fails the
+                # build here instead of falling back to a bare `cdk bootstrap`, which
+                # is precisely the bug above. There is no silent fallback path.
+                - echo "=== CDK Bootstrap (upstream qualifier, own toolkit stack) ==="
+                - |
+                  QUALIFIER=$(node -e 'const fs=require("fs");const c=JSON.parse(fs.readFileSync("cdk.json","utf8"));process.stdout.write(((c.context||{})["@aws-cdk/core:bootstrapQualifier"])||"")')
+                  if [ -z "$QUALIFIER" ]; then
+                    echo "ERROR: upstream $CDK_DIR/cdk.json has no @aws-cdk/core:bootstrapQualifier context key." >&2
+                    echo "       This buildspec refuses to run a bare 'cdk bootstrap' as a fallback: doing so" >&2
+                    echo "       would write upstream's bootstrap into the default CDKToolkit stack and could" >&2
+                    echo "       replace this account's cdk-hnb659fds-* staging roles, breaking every other" >&2
+                    echo "       CDK app in this repo." >&2
+                    echo "       Upstream ref in use: $UPSTREAM_REF" >&2
+                    echo "       Inspect upstream's src/cdk/cdk.json and src/cdk/scripts/bootstrap-account.sh," >&2
+                    echo "       then bootstrap upstream's qualifier into its own toolkit stack explicitly:" >&2
+                    echo "         cdk bootstrap --qualifier <q> --toolkit-stack-name CDKToolkit<Q>" >&2
+                    exit 1
+                  fi
+                  # CDK constrains a qualifier to 1-10 lowercase alphanumerics. Checking
+                  # it here keeps whatever upstream put in cdk.json out of a stack name.
+                  case "$QUALIFIER" in
+                    *[!a-z0-9]*)
+                      echo "ERROR: upstream bootstrap qualifier '$QUALIFIER' is not 1-10 lowercase alphanumerics." >&2
+                      exit 1
+                      ;;
+                  esac
+                  # Match upstream's own scripts/bootstrap-account.sh naming:
+                  # qualifier "petsite" -> toolkit stack "CDKToolkitPetsite".
+                  FIRST=$(printf '%s' "$QUALIFIER" | cut -c1 | tr '[:lower:]' '[:upper:]')
+                  REST=$(printf '%s' "$QUALIFIER" | cut -c2-)
+                  TOOLKIT_STACK="CDKToolkit$FIRST$REST"
+                  echo "Upstream bootstrap qualifier: $QUALIFIER"
+                  echo "Upstream toolkit stack:       $TOOLKIT_STACK"
+                  echo "(the default CDKToolkit stack and its cdk-hnb659fds-* roles are left untouched)"
+                  # No `|| echo "already done"`: cdk bootstrap is idempotent, so a
+                  # non-zero exit is a real failure and must fail the build. The
+                  # already-bootstrapped case is reported from the log, not guessed.
+                  # Written as an `if` so the status is captured whether or not the
+                  # surrounding shell runs with -e (a failing command in an `if`
+                  # condition never triggers -e).
+                  if cdk bootstrap --require-approval never \
+                       --toolkit-stack-name "$TOOLKIT_STACK" \
+                       --qualifier "$QUALIFIER" > /tmp/bootstrap.log 2>&1; then
+                    BOOTSTRAP_STATUS=0
+                  else
+                    BOOTSTRAP_STATUS=$?
+                  fi
+                  cat /tmp/bootstrap.log
+                  if [ "$BOOTSTRAP_STATUS" -ne 0 ]; then
+                    echo "ERROR: cdk bootstrap failed (exit $BOOTSTRAP_STATUS) for toolkit stack $TOOLKIT_STACK, qualifier $QUALIFIER." >&2
+                    echo "       Nothing was deployed. Check the CloudFormation events for $TOOLKIT_STACK in this account." >&2
+                    exit "$BOOTSTRAP_STATUS"
+                  fi
+                  if grep -q "no changes" /tmp/bootstrap.log; then
+                    echo "Bootstrap: $TOOLKIT_STACK (qualifier $QUALIFIER) already up to date, nothing to do."
+                  else
+                    echo "Bootstrap: $TOOLKIT_STACK (qualifier $QUALIFIER) created or updated."
+                  fi
+                - echo "=== CDK Deploy (direct, via local.ts) ==="
+                - npx cdk deploy --all --require-approval never --app "npx ts-node bin/local.ts"
+            post_build:
+              commands:
+                - echo "=== Deployment complete ==="
+                - echo "Deployed upstream ${UpstreamOrg}/${UpstreamRepo}@${UpstreamRef}"
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref BuildComputeType
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: UPSTREAM_REPO_URL
+            Value: !Ref UpstreamRepoUrl
+          - Name: UPSTREAM_REF
+            Value: !Ref UpstreamRef
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref "AWS::Region"
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Ref CodeBuildLogGroup
+      Tags:
+        - Key: Project
+          Value: aiops-poc
+        - Key: Component
+          Value: upstream-backend
+
+Outputs:
+  CodeBuildProjectName:
+    Description: CodeBuild project name (used by deploy script to start builds)
+    Value: !Ref UpstreamDeployProject
+
+  CodeBuildProjectArn:
+    Description: CodeBuild project ARN
+    Value: !GetAtt UpstreamDeployProject.Arn
+
+  CodeBuildRoleArn:
+    Description: IAM role used by CodeBuild for the upstream deployment
+    Value: !GetAtt CodeBuildServiceRole.Arn
+
+  ConfigBucketName:
+    Description: S3 bucket used for upstream source config
+    Value: !Sub "aiops-poc-upstream-source-${AWS::AccountId}"
+
+  StackName:
+    Description: This stack's name for reference in destroy scripts
+    Value: !Ref AWS::StackName

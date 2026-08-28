@@ -1,0 +1,16 @@
+# Keep the Docker build context small and the asset hash reproducible. The
+# image only needs pyproject.toml and src/ (see Dockerfile); everything a local
+# test run leaves behind would otherwise be hashed into the image asset, so
+# running the suite changed the deployed image tag with no source change.
+.venv
+**/.venv
+**/__pycache__
+*.pyc
+*.pyo
+**/.pytest_cache
+*.egg-info
+**/*.egg-info
+**/.git
+**/tests
+dist
+build

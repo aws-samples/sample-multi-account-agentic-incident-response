@@ -1,0 +1,132 @@
+{
+  "_comment": [
+    "Skill_Catalog — which Agent Space receives which skill, and which agent",
+    "types each skill is offered to.",
+    "",
+    "This file is the ONE place both of those decisions are declared. Both",
+    "scripts/package-skills.sh (which builds dist/skills/<space>/) and",
+    "scripts/upload-skills.sh (which uploads and prints the per-space plan) read",
+    "it, so adding a skill means adding one entry under .skills and one line",
+    "under a space's \"skills\" list, and nothing else.",
+    "",
+    "── .spaces — deployment topology ──────────────────────────────────────────",
+    "Why a manifest and not a frontmatter field in each SKILL.md: the routing",
+    "decision is about deployment topology (which space owns which runbook), not",
+    "about the runbook's content, and it has to be reviewable in both directions",
+    "at once — 'what does the platform space get' is a question about the set, not",
+    "about any single skill. A SKILL.md also has to stay portable: the same file",
+    "is loaded by the custom Strands agents from the container image, where",
+    "'agent space' means nothing.",
+    "",
+    "Both scripts fail loudly on a mismatch in EITHER direction: a skill listed",
+    "here with no agents/skills/<name>/SKILL.md, or a skill folder that no space",
+    "claims. A silently unpackaged skill is the failure this file exists to stop.",
+    "",
+    "── .skills[<name>].agentTypes — WHEN the space may load the skill ─────────",
+    "metadata.agent_types is required by the DevOps Agent asset API for skill",
+    "assets, and it is a HARD GATE: a skill scoped to a phase the run never",
+    "enters is simply never eligible, with no error and no journal entry. That",
+    "already cost us a demo — all six skills were first uploaded as",
+    "[\"INCIDENT_TRIAGE\"], so the four backend runbooks were invisible during",
+    "root-cause analysis, which is the only phase they were written for. The",
+    "ddb-throttle skills-ON run measured a space without its catalog.",
+    "",
+    "The enum is not in the service model (metadata is a free-form Document).",
+    "The service enumerates it in the ValidationException for an unknown value:",
+    "  GENERIC, CHAT, INCIDENT_TRIAGE, INCIDENT_RCA, INCIDENT_MITIGATION,",
+    "  PREVENTION, CHANGE_REVIEW, CHANGE_RELEASE, QUALITY_ASSURANCE_TESTING,",
+    "  RELEASE_SHEPHERD, RELEASE_READINESS_REVIEW, RELEASE_TESTING,",
+    "  SYSTEM_LEARNING, INCIDENT_UI",
+    "The user guide's labels map onto the incident phases as Generic = GENERIC",
+    "(the default, applies to ALL agent types), On-demand = CHAT, Incident Triage",
+    "= INCIDENT_TRIAGE (decide WHETHER to investigate — the docs' own example is a",
+    "skill that SKIPS incidents), Incident RCA = INCIDENT_RCA, Incident",
+    "Mitigation = INCIDENT_MITIGATION, Evaluation = PREVENTION.",
+    "",
+    "SECOND CONSTRAINT, also undocumented: GENERIC is exclusive. Sending",
+    "[\"INCIDENT_RCA\", \"GENERIC\"] is rejected with 'GENERIC agent type cannot be",
+    "combined with other agent types'. So the choice per skill is binary — either",
+    "GENERIC alone (every phase) or an explicit phase list with no GENERIC in it.",
+    "There is no 'RCA plus a safety net' option.",
+    "",
+    "Given that, every skill here is [\"GENERIC\"]. GENERIC is a superset of any",
+    "phase list, including INCIDENT_RCA, so it cannot be narrower than the intent;",
+    "and the failure we are recovering from is precisely a too-narrow scope",
+    "disabling a skill with no error and no journal entry. The cost of GENERIC is",
+    "a slightly larger candidate set the agent then filters by description — which",
+    "is why the descriptions carry the concrete alarms and services. The cost of",
+    "being too narrow is a skill that never loads at all. Until a journal shows a",
+    "phase-scoped skill actually loading, GENERIC is the only scope we can verify.",
+    "",
+    "  frontend-triage      [\"GENERIC\"] — it has to be live in BOTH phases: during",
+    "                       triage to decide local-vs-delegate, and during RCA to",
+    "                       actually make the delegation MCP call. Scoping it to",
+    "                       either phase alone breaks the other half, and GENERIC",
+    "                       is the only value that covers both.",
+    "  report-standards     [\"GENERIC\"] — every run of every phase ends in a",
+    "                       report, including on-demand queries.",
+    "  untrusted-content-   [\"GENERIC\"] — input-handling rules have to be in",
+    "  handling             force before the first read and still in force at",
+    "                       the last write, so they span every phase. Scoping",
+    "                       them to one phase would leave the others reading",
+    "                       workload-authored text with no framing at all. Both",
+    "                       spaces get it: the app-team space ingests logs and",
+    "                       peer findings, the platform space ingests backend",
+    "                       telemetry and KB passages.",
+    "  the four backend     [\"GENERIC\"] — these are root-cause procedures, so",
+    "  runbooks             INCIDENT_RCA is the phase that describes them, and it",
+    "                       is confirmed accepted by the API. GENERIC is used",
+    "                       anyway because it is a superset of INCIDENT_RCA and the",
+    "                       exclusivity rule above forbids carrying both. Narrowing",
+    "                       to INCIDENT_RCA alone is the change to make only once a",
+    "                       journal has shown a phase-scoped skill loading.",
+    "",
+    "The self-managed fallback agents are NOT covered by either field: they load",
+    "agents/skills/ from their container image, so they are unaffected by the",
+    "split and have no notion of agent types."
+  ],
+  "skills": {
+    "frontend-triage": {
+      "agentTypes": ["GENERIC"]
+    },
+    "report-standards": {
+      "agentTypes": ["GENERIC"]
+    },
+    "untrusted-content-handling": {
+      "agentTypes": ["GENERIC"]
+    },
+    "checkout-latency-investigation": {
+      "agentTypes": ["GENERIC"]
+    },
+    "payments-failure-investigation": {
+      "agentTypes": ["GENERIC"]
+    },
+    "search-investigation": {
+      "agentTypes": ["GENERIC"]
+    },
+    "fulfillment-backlog-investigation": {
+      "agentTypes": ["GENERIC"]
+    }
+  },
+  "spaces": {
+    "app-team": {
+      "role": "First responder in the frontend/app domain. Triages the user-visible symptom, resolves app-domain incidents locally, and delegates backend suspects to the platform space.",
+      "skills": [
+        "frontend-triage",
+        "untrusted-content-handling",
+        "report-standards"
+      ]
+    },
+    "platform": {
+      "role": "Backend/platform investigator. Receives delegated tasks naming a backend suspect and runs the matching service-level runbook.",
+      "skills": [
+        "checkout-latency-investigation",
+        "payments-failure-investigation",
+        "search-investigation",
+        "fulfillment-backlog-investigation",
+        "untrusted-content-handling",
+        "report-standards"
+      ]
+    }
+  }
+}

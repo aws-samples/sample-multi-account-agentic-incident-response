@@ -1,0 +1,12 @@
+# Keep the Docker build context small. The agent images only need
+# shared/, backend-agent/, kb-agent/, skills/ and __init__.py.
+infra
+kb-corpus
+**/node_modules
+**/cdk.out
+**/.pytest_cache
+**/__pycache__
+*.egg-info
+**/*.egg-info
+**/.git
+**/tests
