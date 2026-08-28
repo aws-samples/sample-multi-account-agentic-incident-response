@@ -1,0 +1,262 @@
+{
+  "_doc": {
+    "$": "Copy this file to config/accounts.json (git-ignored) and replace every placeholder, or run scripts/setup-config.sh to be prompted for each field. config/accounts.json is the only file a Replicator edits — no account ID, region, profile name, or email belongs anywhere else in the repository. Keys prefixed with _ are metadata and are ignored by every consumer, so this block can stay in your working copy. Values that a deploy produces rather than a Replicator supplies (bucket names, knowledge base ID, topic ARNs, runtime ARNs, SSM parameters) are not fields here — they are documented in docs/parameters.md. Resource names fixed by the upstream sample are not fields here either — they are hardcoded where they are consumed.",
+    "backend.accountId": {
+      "required": true,
+      "format": "accountId",
+      "description": "12-digit AWS account ID for the backend (BE) account hosting the upstream PetAdoptions workload.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/destroy-all.sh",
+        "workload/backend/deploy/deploy-upstream.sh",
+        "workload/backend/overlay/bin/app.ts",
+        "workload/frontend/bin/app.ts",
+        "agent-spaces/bin/app.ts",
+        "agents/infra/bin/app.ts (injected as BE_ACCOUNT_ID into the diagnostics MCP runtime)"
+      ]
+    },
+    "backend.region": {
+      "required": false,
+      "default": "us-east-1",
+      "format": "region",
+      "description": "Region for the BE account. All three accounts must use the same region — the demo has not been validated split across regions.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/sync-outputs.sh",
+        "scripts/destroy-all.sh",
+        "workload/backend/deploy/deploy-upstream.sh",
+        "workload/backend/overlay/bin/app.ts"
+      ]
+    },
+    "backend.profile": {
+      "required": false,
+      "default": "backend-app",
+      "format": "profile",
+      "description": "Local AWS CLI profile with credentials for the BE account. Defaults to the conventional profile name backend-app — either create a profile with that name (any credential source works: aws configure, aws sso login, or assumed roles) or override this field.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/deploy-all.sh",
+        "scripts/destroy-all.sh",
+        "scripts/sync-outputs.sh",
+        "workload/backend/deploy/deploy-upstream.sh",
+        "chaos/scripts/inject.sh",
+        "chaos/scripts/restore.sh",
+        "chaos/scripts/trigger-alarm.sh"
+      ]
+    },
+    "frontend.accountId": {
+      "required": true,
+      "format": "accountId",
+      "description": "12-digit AWS account ID for the frontend (FE) account hosting petsite, the journey canary, and the FE golden-signal alarms.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/destroy-all.sh",
+        "agent-spaces/bin/app.ts",
+        "workload/backend/overlay/bin/app.ts (PrivateLink allowed principal)",
+        "workload/frontend/bin/app.ts"
+      ]
+    },
+    "frontend.region": {
+      "required": false,
+      "default": "us-east-1",
+      "format": "region",
+      "description": "Region for the FE account. Must match backend.region and ops.region.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/deploy-all.sh",
+        "scripts/sync-outputs.sh",
+        "workload/frontend/bin/app.ts"
+      ]
+    },
+    "frontend.profile": {
+      "required": false,
+      "default": "frontend-app",
+      "format": "profile",
+      "description": "Local AWS CLI profile with credentials for the FE account. Defaults to the conventional profile name frontend-app — either create a profile with that name (any credential source works: aws configure, aws sso login, or assumed roles) or override this field.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/deploy-all.sh",
+        "scripts/destroy-all.sh",
+        "scripts/sync-outputs.sh",
+        "chaos/scripts/inject.sh",
+        "chaos/scripts/restore.sh",
+        "chaos/scripts/trigger-alarm.sh",
+        "loadgen/run.sh (--profile default)"
+      ]
+    },
+    "ops.accountId": {
+      "required": true,
+      "format": "accountId",
+      "description": "12-digit AWS account ID for the operations (OPS) account hosting the agents, agent spaces, webhook bridge, and report store.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/destroy-all.sh",
+        "scripts/register-diagnostics-mcp.sh",
+        "scripts/register-fallback-agents.sh",
+        "scripts/register-fallback-agents-mcp.sh",
+        "scripts/register-platform-space-mcp.sh",
+        "scripts/register-platform-space-agent.sh",
+        "scripts/smoke-test.sh",
+        "scripts/test-fallback.sh",
+        "agents/infra/bin/app.ts",
+        "agent-spaces/bin/app.ts",
+        "workload/backend/overlay/bin/app.ts",
+        "workload/frontend/bin/app.ts"
+      ]
+    },
+    "ops.region": {
+      "required": false,
+      "default": "us-east-1",
+      "format": "region",
+      "description": "Region for the OPS account. Must match backend.region and frontend.region. DevOps Agent and Bedrock AgentCore are verified available in us-east-1.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/sync-outputs.sh",
+        "scripts/sync-kb.sh",
+        "scripts/register-*.sh",
+        "scripts/smoke-test.sh",
+        "chaos/scripts/*.sh",
+        "agents/infra/bin/app.ts",
+        "agent-spaces/bin/app.ts",
+        "docs/operator-ide.md (DEVOPS_AGENT_REGION)"
+      ]
+    },
+    "ops.profile": {
+      "required": false,
+      "default": "monitoring",
+      "format": "profile",
+      "description": "Local AWS CLI profile with credentials for the OPS account. Defaults to the conventional profile name monitoring — either create a profile with that name (any credential source works: aws configure, aws sso login, or assumed roles) or override this field.",
+      "consumedBy": [
+        "scripts/bootstrap.sh",
+        "scripts/deploy-all.sh",
+        "scripts/destroy-all.sh",
+        "scripts/sync-outputs.sh",
+        "scripts/sync-kb.sh",
+        "scripts/register-*.sh",
+        "scripts/smoke-test.sh",
+        "scripts/test-delegation.sh",
+        "scripts/test-fallback.sh",
+        "scripts/upload-skills.sh",
+        "agent-spaces/set-webhook-secret.sh"
+      ]
+    },
+    "ops.escalationEmail": {
+      "required": true,
+      "format": "email",
+      "description": "Owning-team email address subscribed to the aiops-poc-escalations SNS topic. AWS sends a subscription confirmation that must be accepted before escalation email arrives.",
+      "consumedBy": [
+        "agents/infra/bin/app.ts (SNS email subscription in AgentsInfraStack)"
+      ]
+    },
+    "upstream.org": {
+      "required": false,
+      "default": "aws-samples",
+      "format": "string",
+      "description": "GitHub organization owning the upstream PetAdoptions sample that the BE workload is deployed from.",
+      "consumedBy": [
+        "workload/backend/deploy/deploy-upstream.sh",
+        "workload/frontend/bin/app.ts"
+      ]
+    },
+    "upstream.repo": {
+      "required": false,
+      "default": "one-observability-demo",
+      "format": "string",
+      "description": "GitHub repository name of the upstream PetAdoptions sample.",
+      "consumedBy": [
+        "workload/backend/deploy/deploy-upstream.sh",
+        "workload/frontend/bin/app.ts"
+      ]
+    },
+    "upstream.ref": {
+      "required": false,
+      "default": "4f588629bd44eef0c8df49e7c01fe7ba479853a1",
+      "format": "string",
+      "description": "Git ref of the upstream sample to deploy: a branch, a tag, or a full 40-character commit SHA. A full SHA is recommended and is what the default is — it is the only value that is reproducible, since a branch moves and a tag can be re-pointed. An ABBREVIATED SHA does not work: all three consumers fetch this ref by name and git cannot fetch an abbreviated SHA. The default is the upstream commit this PoC was validated against (aws-samples/one-observability-demo main as of 2026-06-12). Resource names fixed by the upstream sample are determined by this ref, so changing it can break the overlay's assumptions.",
+      "consumedBy": [
+        "workload/backend/deploy/deploy-upstream.sh",
+        "workload/frontend/bin/app.ts"
+      ]
+    },
+    "peer": {
+      "required": false,
+      "default": "both",
+      "format": "string",
+      "allowed": ["devops", "kb", "both"],
+      "description": "Which fallback consultation agents to deploy in the OPS account: devops (live-telemetry agent only), kb (knowledge-grounded agent only), or both. Published to SSM /aiops-poc/peer.",
+      "consumedBy": [
+        "agents/infra/bin/app.ts"
+      ]
+    },
+    "skillsEnabled": {
+      "required": false,
+      "default": true,
+      "format": "boolean",
+      "description": "Whether the devops agent runtime starts with the packaged skills enabled (SKILLS_ENABLED). Set false to run the skills-OFF comparison.",
+      "consumedBy": [
+        "agents/infra/bin/app.ts"
+      ]
+    },
+    "operator.federationIdentifier": {
+      "required": true,
+      "format": "string",
+      "sessionNameFrom": "ops.profile",
+      "description": "The session name that the identity you will sign in to the Operator Web App with presents. An IAM Identity Center session name is one example of such a session name, not the definition. In the common case — you deploy with the same federated identity you open the web app with — read it off the credentials you already have: `aws sts get-caller-identity --profile <ops.profile> --query Arn --output text` returns arn:aws:sts::<ops-account>:assumed-role/<role>/<session-name>, and the last slash-delimited segment is this value. scripts/setup-config.sh offers that parsed session name as the prompt default. CAVEAT: if the deploy runs under a CI or automation role while a human operates the web app under their own identity, the deploy profile's session name is the WRONG value and the failure looks identical (the value is accepted everywhere and sign-in simply does not work) — enter the human identity's session name instead. It CANNOT be set via API or CloudFormation — enter it manually once per space in the console Operator Access tab; deploys never overwrite it. The value here is used to build the trust policy the console setting must match. See agent-spaces/README.md.",
+      "consumedBy": [
+        "agent-spaces/bin/app.ts",
+        "scripts/deploy-all.sh"
+      ]
+    },
+    "bedrock.modelId": {
+      "required": false,
+      "default": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "format": "string",
+      "description": "Bedrock model identifier the fallback KB agent invokes, injected as MODEL_ID. This is a cross-region inference profile: the bare foundation-model ID and the sonnet-4 profile are rejected in the authoring account, and profile availability is region- and account-gated, so an account without this profile must override it here.",
+      "consumedBy": [
+        "agents/infra/lib/agents-infra-stack.ts (MODEL_ID on the kb agent runtime)"
+      ]
+    },
+    "escalation.mode": {
+      "required": false,
+      "default": "always",
+      "format": "string",
+      "allowed": ["always", "auto"],
+      "description": "How eagerly the fallback KB agent escalates by email, injected as ESCALATION_MODE. always is the demo-eager default — every investigation escalates so the email reliably arrives; auto lets the agent decide.",
+      "consumedBy": [
+        "agents/infra/lib/agents-infra-stack.ts (ESCALATION_MODE on the kb agent runtime)"
+      ]
+    }
+  },
+  "backend": {
+    "accountId": "111111111111",
+    "region": "us-east-1",
+    "profile": "backend-app"
+  },
+  "frontend": {
+    "accountId": "222222222222",
+    "region": "us-east-1",
+    "profile": "frontend-app"
+  },
+  "ops": {
+    "accountId": "333333333333",
+    "region": "us-east-1",
+    "profile": "monitoring",
+    "escalationEmail": "REPLACE_WITH_TEAM_EMAIL"
+  },
+  "upstream": {
+    "org": "aws-samples",
+    "repo": "one-observability-demo",
+    "ref": "4f588629bd44eef0c8df49e7c01fe7ba479853a1"
+  },
+  "peer": "both",
+  "skillsEnabled": true,
+  "operator": {
+    "federationIdentifier": "your-federation-identifier"
+  },
+  "bedrock": {
+    "modelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  },
+  "escalation": {
+    "mode": "always"
+  }
+}

@@ -1,0 +1,48 @@
+# Account-specific configuration (use config/accounts.json.template)
+config/accounts.json
+
+# Node / CDK
+node_modules/
+cdk.out/
+# CDK lookup caches at any depth: cached account/VPC/subnet/AZ IDs are specific
+# to the environment that synthesized them and must not be shared
+cdk.context.json
+*.js.map
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Kiro working files, local to the author: spec documents and the personal
+# steering notes (credential workflow, profile mappings) — neither belongs
+# in version control
+.kiro/specs/
+.kiro/steering/
+
+# Holmes (internal pre-publication content-security review) local state:
+# caches the internal project and scan IDs for the reviewer's own machine.
+# Internal review metadata — must not ship in a public sample.
+.holmes/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local env and logs
+.env
+*.log
+build.log
+
+# Local credentials/deployment guide (contains account IDs - keep local)
+AWS Credentials Prompt.md
+
+# Threat modeling output (Threat Modeling MCP server exports):
+# generated artifacts, regenerable from the model, and may summarise
+# account-specific architecture detail. Keep local.
+.threatmodel/
